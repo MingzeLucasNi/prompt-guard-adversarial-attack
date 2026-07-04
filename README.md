@@ -70,12 +70,12 @@ Evaluating how well Meta's open-source prompt-injection/jailbreak classifier hol
 | *Baseline (no attack)* | 263 | — | 247 (93.9%) | — |
 | **PWWS** | 50 | 17 | 33 | **34.0%** |
 | **TextFooler** | 50 | 31 | 19 | **62.0%** |
-| **CLARE** | — | — | — | not yet run |
-| **PSO** | — | — | — | not yet run |
+| **PSO** | 50 | 0 | 50 | **0.0%** |
+| **CLARE** | — | — | — | pending (running on a GPU server; too slow on CPU) |
 
-Full per-example results (before/after label, confidence, and exactly which words were changed) are in [`results/pwws/`](results/pwws/) and [`results/textfooler/`](results/textfooler/) — see `report.md` in each folder for a readable summary, or `details.json` for structured data.
+Full per-example results (before/after label, confidence, and exactly which words were changed) are in [`results/pwws/`](results/pwws/), [`results/textfooler/`](results/textfooler/), and [`results/pso/`](results/pso/) — see `report.md` in each folder for a readable summary, or `details.json` for structured data.
 
-完整的逐条结果（攻击前后标签、置信度、以及具体改动了哪些词）见 [`results/pwws/`](results/pwws/) 和 [`results/textfooler/`](results/textfooler/) 文件夹，每个文件夹下 `report.md` 是可读报告，`details.json` 是结构化数据。
+完整的逐条结果（攻击前后标签、置信度、以及具体改动了哪些词）见 [`results/pwws/`](results/pwws/)、[`results/textfooler/`](results/textfooler/) 和 [`results/pso/`](results/pso/) 文件夹，每个文件夹下 `report.md` 是可读报告，`details.json` 是结构化数据。
 
 ---
 
@@ -85,13 +85,15 @@ Full per-example results (before/after label, confidence, and exactly which word
 - Prompt Guard 86M has a high detection rate (93.9%) on the known-injection benchmark before any attack — it works well against the patterns it was trained on.
 - A simple, black-box synonym-substitution attack (PWWS) with no gradient access already flips **34%** of correctly-caught prompts to benign while preserving their meaning.
 - TextFooler — which searches a larger candidate space under part-of-speech and semantic-similarity constraints — nearly doubles that to **62%**, suggesting the model's decision boundary is not robust to small, meaning-preserving lexical substitutions.
-- This is consistent with a well-documented pattern in NLP security research: neural text classifiers, including safety filters, are generally vulnerable to standard word-substitution attacks unless explicitly hardened against them (e.g. via adversarial training).
+- Attack effectiveness is not uniform across algorithms: PSO, despite using the full 1000-query budget on every example, achieved **0%** success. Its candidate substitutions come from HowNet sense annotations, a much smaller and coarser synonym source than WordNet (PWWS) or counter-fitted embeddings (TextFooler) for this kind of English text — a reminder that an attack's reported strength is inseparable from its underlying substitution vocabulary, not just its search strategy.
+- Taken together, this shows neural safety classifiers, including Prompt Guard, are generally vulnerable to word-substitution attacks unless explicitly hardened against them (e.g. via adversarial training) — but *how* vulnerable depends heavily on which attack algorithm (and word-substitution source) is used.
 
 **中文**
 - Prompt Guard 86M 在攻击前对已知注入样本的检出率很高（93.9%）——对训练时见过的模式识别得不错。
 - 一个不需要梯度信息的简单黑盒同义词替换攻击（PWWS），在保持原意的前提下，已经能让 **34%** 的样本从"被正确拦截"变成"被判定无害"。
 - 搜索空间更大、附加了词性和语义相似度约束的 TextFooler，把这个比例几乎翻倍到 **62%**，说明模型的决策边界对保持语义的小幅词汇替换并不鲁棒。
-- 这与NLP安全研究中一个已被广泛记录的现象一致：神经网络文本分类器（包括安全过滤器），如果没有专门针对性地做过对抗训练加固，通常都容易被标准的词级替换攻击攻破。
+- 攻击效果在不同算法之间差异很大：PSO 虽然每条样本都用满了1000次查询预算，成功率却是 **0%**。它的候选替换词来自 HowNet 义原标注，对这类英文文本而言，是比 WordNet（PWWS）或反义词过滤词向量（TextFooler）小得多、也粗糙得多的同义词来源——这提醒我们，一个攻击方法报告出来的强弱，很大程度上取决于它底层的替换词表，而不只是搜索策略本身。
+- 总的来看，这说明包括 Prompt Guard 在内的神经网络安全分类器，如果没有专门做过对抗训练加固，通常都容易被词级替换攻击攻破——但"有多容易被攻破"很大程度上取决于具体用的是哪种攻击算法（以及背后的替换词来源）。
 
 ---
 
@@ -107,8 +109,8 @@ python -c "import nltk; [nltk.download(p) for p in ['averaged_perceptron_tagger_
 python baseline.py               # computes the 93.9% baseline, writes detected_injections.json
 python run_attack.py pwws        # ~15-30 min on CPU; seconds/example on a CUDA GPU
 python run_attack.py textfooler
-python run_attack.py clare       # slower; try --n 10 first
-python run_attack.py pso         # slower; try --n 10 first
+python run_attack.py pso         # slow on CPU (full query budget per example)
+python run_attack.py clare       # search + masked-LM based, slowest; a GPU is strongly recommended
 python compare_results.py        # prints a summary table across all attacks that have been run
 ```
 
@@ -137,13 +139,13 @@ results/<recipe>/        # summary.json, details.json, report.md, results.csv pe
 
 **EN**
 - Sample size is 50 prompts per attack; a larger sample would give tighter confidence intervals on the success-rate estimates.
-- CLARE and PSO are not yet run to completion (both are search-heavy and compute-intensive); this README will be updated once those results are in.
+- CLARE (masked-language-model based perturbation) is too slow to complete on CPU; it is being run on a GPU server and this README will be updated once that result is in.
 - The semantic-similarity constraint for TextFooler/CLARE is a PyTorch substitute for the original TensorFlow-based USE constraint, so absolute numbers may differ slightly from the original papers' reported results.
 - Results reflect this specific model snapshot (Prompt Guard 86M); Meta's newer Prompt Guard 2 models were not evaluated here.
 
 **中文**
 - 每种攻击样本量为50条，更大的样本量能让成功率估计的置信区间更紧。
-- CLARE 和 PSO 尚未跑完（两者都是搜索密集型、计算量大），后续结果会更新到本文档。
+- CLARE（基于掩码语言模型的扰动）在 CPU 上太慢跑不完，正在服务器GPU上跑，跑完后会更新到本文档。
 - TextFooler/CLARE 的语义相似度约束用 PyTorch 方案替代了原论文基于 TensorFlow 的 USE 约束，因此绝对数值可能与原论文报告的结果略有出入。
 - 结果只反映 Prompt Guard 86M 这一个模型快照，未评测 Meta 更新的 Prompt Guard 2 系列。
 

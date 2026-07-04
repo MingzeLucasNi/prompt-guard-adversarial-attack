@@ -1,0 +1,11 @@
+{
+  "recipe": "pso",
+  "n_total_sampled": 50,
+  "n_skipped_already_evading_or_error": 0,
+  "n_attempted": 50,
+  "n_success_evaded": 0,
+  "n_still_detected_after_attack": 50,
+  "baseline_detection_rate_pct": 100.0,
+  "attack_success_rate_pct": 0.0,
+  "post_attack_detection_rate_pct": 100.0
+}
