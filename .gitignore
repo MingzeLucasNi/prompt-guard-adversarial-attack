@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.claude/
+.DS_Store
+
+# Generated per-run attack outputs (regenerate by running run_attack.py)
+results_*.csv
+summary_*.json
+details_*.json
+report_*.md
