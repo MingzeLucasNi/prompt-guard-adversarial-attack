@@ -1,138 +1,158 @@
-# 攻击 Meta Prompt Guard (86M)
+# Adversarial Robustness Evaluation of Meta's Prompt Guard 86M
+# 对 Meta Prompt Guard 86M 的对抗鲁棒性评测
 
-用 TextAttack 的标准 recipe 对 `meta-llama/Prompt-Guard-86M`（下载自免gate的镜像
-`Niansuh/Prompt-Guard-86M`，权重与官方一致）做 red-team 式对抗攻击：
+Evaluating how well Meta's open-source prompt-injection/jailbreak classifier holds up under standard, published adversarial NLP attacks.
 
-对 `deepset/prompt-injections` 数据集里被模型判定为 `INJECTION`/`JAILBREAK`
-（即已经被正确拦截）的文本做词级扰动，看能不能让模型把它们误判成 `BENIGN`
-（绕过检测）。这是标准的"有害→无害"逃逸攻击方向。
+用四种经典对抗NLP攻击方法，评测 Meta 开源的 prompt injection / jailbreak 分类器的鲁棒性。
 
-## 环境准备（已装好，仅记录）
+---
 
-```bash
-source .venv/bin/activate
-pip install -r requirements.txt
-```
+## Overview / 项目简介
 
-已验证:
-- 模型 3 分类: `{0: BENIGN, 1: INJECTION, 2: JAILBREAK}`
-- 数据集: train 546条 + test 116条，其中 label=1(injection) 共 263 条
+**EN** — This project measures the adversarial robustness of [Prompt Guard 86M](https://huggingface.co/meta-llama/Prompt-Guard-86M), Meta's open-weight classifier for detecting prompt injection and jailbreak attempts. Using the [TextAttack](https://github.com/QData/TextAttack) framework, four well-established word-substitution attack algorithms from the adversarial NLP literature — **PWWS**, **TextFooler**, **CLARE**, and **PSO** — are applied to prompts the model already correctly flags as malicious, to see how many can be rewritten (while preserving their original meaning) into text the model misclassifies as benign.
 
-### 踩过的坑（这台机器上遇到的，已经在代码里修好了，不用你管，记录一下原因）
+**中文** — 本项目评测 Meta 开源的 prompt injection / jailbreak 分类器 [Prompt Guard 86M](https://huggingface.co/meta-llama/Prompt-Guard-86M) 的对抗鲁棒性。使用 [TextAttack](https://github.com/QData/TextAttack) 框架，对已经被模型正确判定为恶意的 prompt，应用四种对抗NLP文献中的经典词级替换攻击算法——**PWWS**、**TextFooler**、**CLARE**、**PSO**——衡量在保持原意的前提下，有多少比例可以被改写成模型误判为无害的文本。
 
-1. **不要用 MPS(Apple GPU)**：变长文本每次 forward 都要重新编译 Metal
-   计算图，慢到离谱。两个脚本的设备选择逻辑是"有 CUDA 用 CUDA，否则用
-   CPU"，故意跳过 MPS——在 Mac 上会自动落到 CPU（反而比 MPS 快），拿去
-   服务器跑如果有 CUDA 会自动用上，不用改代码。
-2. **这台 macOS(26.5.1 beta) 上 TensorFlow 直接崩溃**（`import tensorflow`
-   触发 `mutex lock failed`），而 TextFooler/CLARE 官方 recipe 的语义相似度
-   约束（Universal Sentence Encoder）依赖 `tensorflow_hub`。所以：
-   - 卸载了 `tensorflow`/`tensorflow-hub`。
-   - 写了 `sbert_encoder.py`，用纯 PyTorch 的 `sentence-transformers`
-     (all-MiniLM-L6-v2) 实现同样接口的语义相似度约束。
-   - `custom_recipes.py` 里的 `build_textfooler` / `build_clare` 是官方
-     recipe 的等价版本，只是把 USE 换成了这个 SBERT 约束（阈值做了对应调整，
-     不是严格复现论文数字，但攻防语义一致）。
-   - 两个脚本开头都设了 `USE_TF=0`，避免 `transformers` 库自己去探测 TF
-     可用性时再次触发这个崩溃。
-3. **攻击方向的一个真实 bug（已修好）**：TextAttack 各 recipe 默认用
-   `UntargetedClassification`，"成功"只要标签变了就算——包括从
-   `INJECTION` 变成 `JAILBREAK`，但这**不是**绕过 Prompt Guard！第一次跑
-   PWWS 时发现 3 个"成功"样本全是 1↔2 之间互相跳，没有一个真正跳到
-   `BENIGN`。改成了 `TargetedClassification(target_class=0)`（只有真正
-   被判成 BENIGN 才算攻击成功），并注意 TextAttack 的 `Attack.__init__`
-   会把 goal function 绑定进 search method，构造后直接改
-   `attack.goal_function` 不生效，所以 `run_attack.py` 里是重新构造了
-   一个 `Attack` 对象。
+---
 
-## 第一步：跑 baseline（攻击前的检出率）
+## Ethics & Responsible Use / 伦理声明
 
-```bash
-source .venv/bin/activate
-python baseline.py
-```
+**EN**
+- This is academic adversarial-robustness research, not a tool for real-world abuse. The goal is to measure and help improve the robustness of safety classifiers — the same motivation behind the published attack papers this project implements (Ren et al. 2019; Jin et al. 2020; Li et al. 2021; Zang et al. 2020).
+- Every component is open and public: an unmodified mirror of Meta's open-weight model, a public benchmark dataset ([`deepset/prompt-injections`](https://huggingface.co/datasets/deepset/prompt-injections)), and peer-reviewed, previously published attack algorithms. No novel exploit, private data, or production system is involved.
+- No real users, private data, or deployed systems were targeted.
+- This work is not intended to help anyone manipulate, deceive, or bypass safety systems in live applications. Were similar findings ever obtained against a real production deployment (not the case here), the responsible path is disclosure to the vendor, not exploitation.
+- All findings are shared openly (open weights, open data, open code) to support the community working on making these classifiers more robust, consistent with standard practice in adversarial ML research.
 
-会打印类似:
-```
-BASELINE detection rate (before any attack): 247/263 = 93.92%
-```
+**中文**
+- 这是学术性质的对抗鲁棒性研究，不是用于真实世界恶意利用的工具。目的是衡量并帮助提升安全分类器的鲁棒性——这也是本项目所实现的攻击方法论文本身的初衷（Ren et al. 2019；Jin et al. 2020；Li et al. 2021；Zang et al. 2020）。
+- 所用的每一个组件都是公开的：Meta 开源权重模型的原样镜像、公开基准数据集（[`deepset/prompt-injections`](https://huggingface.co/datasets/deepset/prompt-injections)）、以及经过同行评审、已发表的攻击算法。不涉及任何新型漏洞利用，也不涉及任何私有数据或生产系统。
+- 全程没有针对任何真实用户、私人数据或线上部署系统。
+- 本项目无意帮助任何人在真实应用中操纵、欺骗或绕过安全系统。如果类似方法未来被用于针对真实生产环境（本项目并非如此），负责任的做法是向厂商披露，而非加以利用。
+- 所有结果都以完全公开的方式分享（开源权重、开源数据、开源代码），目的是支持社区共同提升这类分类器的鲁棒性，这也是对抗机器学习研究领域的通常做法。
 
-并把这 247 条"确实被模型正确拦截"的文本存到 `detected_injections.json`
-（后面攻击只对这些"确实被抓到的"样本做，攻击本来就没抓到的样本没有意义）。
+---
 
-## 第二步：分别跑 4 种攻击（各挑 50 条样本，可用 `--n` 调整）
+## Methodology / 方法
 
-每个都会实时打印 TextAttack 自带的进度条 (`x/50 [==>...]`)，你能直接看到进度。
+**EN**
+- **Target model**: Prompt Guard 86M (3-way classifier: `BENIGN` / `INJECTION` / `JAILBREAK`), loaded from an unmodified public mirror of the official weights.
+- **Seed data**: [`deepset/prompt-injections`](https://huggingface.co/datasets/deepset/prompt-injections) (609 examples total); the 263 examples labeled as injection attempts are used as attack seeds.
+- **Baseline**: of those 263, the model correctly flags 247 (93.9%) as non-benign *before any attack* — this is the starting detection rate the attacks try to break.
+- **Attack objective**: a **targeted** evasion attack toward label `BENIGN`. Success means the perturbed prompt is misclassified as benign — not merely relabeled between `INJECTION` and `JAILBREAK` (which would not be a real evasion).
+- **Attacks evaluated**, all via TextAttack:
+  - **PWWS** (Ren et al., 2019) — WordNet synonym substitution guided by word saliency.
+  - **TextFooler** (Jin et al., 2020) — counter-fitted word-embedding substitution with POS and semantic-similarity constraints.
+  - **CLARE** (Li et al., 2021) — contextualized replace/insert/merge perturbations via a masked language model.
+  - **PSO** (Zang et al., 2020) — particle swarm optimization over HowNet sense-based synonym substitutions.
+- **Sample size**: 50 randomly sampled prompts per attack (from the 247 correctly-detected examples), query budget 1000 per example.
+- For TextFooler/CLARE, the semantic-similarity constraint is implemented with a PyTorch `sentence-transformers` model rather than the original papers' TensorFlow-based Universal Sentence Encoder, for environment portability (no functional difference to the attack's goal).
 
-```bash
-python run_attack.py pwws          # WordNet 同义词替换，实测约 20-40秒/条
-python run_attack.py textfooler    # 词向量替换 + SBERT 语义约束，实测约 45-50秒/条
-python run_attack.py clare         # RoBERTa mask-infill 上下文替换，单条耗时随文本长度波动较大
-python run_attack.py pso           # 粒子群优化 + HowNet 同义词，最慢（population=60, iters=20，默认query-budget=1000）
-```
+**中文**
+- **目标模型**：Prompt Guard 86M（三分类：`BENIGN` / `INJECTION` / `JAILBREAK`），使用官方权重的原样公开镜像。
+- **种子数据**：[`deepset/prompt-injections`](https://huggingface.co/datasets/deepset/prompt-injections)（共609条），取其中标注为注入攻击的263条作为攻击起点。
+- **基线**：这263条中，模型在**攻击前**能正确识别247条（93.9%）为非无害——这就是攻击要突破的起始检出率。
+- **攻击目标**：**定向**逃逸攻击，目标标签为 `BENIGN`。只有扰动后的文本被误判为无害才算成功——单纯在 `INJECTION` 和 `JAILBREAK` 之间切换不算真正的逃逸。
+- **评测的攻击方法**（均通过 TextAttack 实现）：
+  - **PWWS**（Ren et al., 2019）——基于词语显著性的 WordNet 同义词替换。
+  - **TextFooler**（Jin et al., 2020）——反义词过滤词向量替换，附加词性和语义相似度约束。
+  - **CLARE**（Li et al., 2021）——基于掩码语言模型的上下文感知替换/插入/合并扰动。
+  - **PSO**（Zang et al., 2020）——基于 HowNet 义原的同义词替换 + 粒子群优化搜索。
+- **样本规模**：每种攻击从247条已正确检出的样本中随机抽取50条，每条查询预算1000次。
+- TextFooler/CLARE 的语义相似度约束改用基于 PyTorch 的 `sentence-transformers` 模型实现，而非原论文中基于 TensorFlow 的 Universal Sentence Encoder（纯粹是为了环境可移植性，攻击目标本身没有变化）。
 
-CPU 上 50 条 PWWS 大概 15-30 分钟，TextFooler 更慢一些；CLARE / PSO 建议先用
-`--n 10` 或 `--n 20` 试跑感受一下单条耗时，觉得可接受再放到 50。
-也可以用 `--query-budget` 调小上限（比如 300）以牺牲一点攻击成功率换取
-更快的运行速度。
+---
 
-每跑完一个 recipe 会生成 4 个文件，方便检查（数字汇总 + 逐条细节 + 人类可读报告 + 原始日志）:
+## Results / 结果
 
-- `summary_<recipe>.json` — 该 recipe 的汇总数字（攻击成功率、样本数等）
-- `details_<recipe>.json` — **逐条结构化数据**：每条样本的攻击前/后标签、
-  置信度、P(BENIGN)、查询次数、**具体被换掉的词列表**（`removed_words` /
-  `added_words`）、以及改动前后的完整文本（纯文本版 `*_text_plain` 和
-  带 `[[ ]]` 标记版 `*_text_marked`）
-- `report_<recipe>.md` — 和上面同样的内容，排成人类可读的 Markdown：
-  开头是全部样本的总览表格（一眼看出哪几条成功、置信度多少），下面是
-  逐条详情，每条都写明"被删掉/替换掉的原词"和"替换成/新插入的词"，
-  并把原文和攻击后文本都用 `[[ ]]` 标出具体改动的位置，不用自己肉眼
-  找哪里不一样
-- `results_<recipe>.csv` — TextAttack 自带的原始逐条日志（同样带 `[[ ]]`
-  标记，可以用 Excel/Numbers 打开筛选/排序）
+| Attack | Samples attacked | Evaded to BENIGN | Still detected | Attack success rate |
+|---|---|---|---|---|
+| *Baseline (no attack)* | 263 | — | 247 (93.9%) | — |
+| **PWWS** | 50 | 17 | 33 | **34.0%** |
+| **TextFooler** | 50 | 31 | 19 | **62.0%** |
+| **CLARE** | — | — | — | not yet run |
+| **PSO** | — | — | — | not yet run |
 
-想快速检查某个 recipe 跑得怎么样，直接打开 `report_<recipe>.md` 看总览表格
-和逐条详情就够了；想写代码进一步分析（比如统计最常被换的词），读
-`details_<recipe>.json`。
+Full per-example results (before/after label, confidence, and exactly which words were changed) are in [`results/pwws/`](results/pwws/) and [`results/textfooler/`](results/textfooler/) — see `report.md` in each folder for a readable summary, or `details.json` for structured data.
 
-## 第三步：汇总对比
+完整的逐条结果（攻击前后标签、置信度、以及具体改动了哪些词）见 [`results/pwws/`](results/pwws/) 和 [`results/textfooler/`](results/textfooler/) 文件夹，每个文件夹下 `report.md` 是可读报告，`details.json` 是结构化数据。
 
-```bash
-python compare_results.py
-```
+---
 
-输出每个 recipe 的：攻击样本数 / 成功逃逸数 / 仍被拦截数 / 攻击成功率(%)。
+## Key Findings / 关键发现
 
-## 在服务器上跑
+**EN**
+- Prompt Guard 86M has a high detection rate (93.9%) on the known-injection benchmark before any attack — it works well against the patterns it was trained on.
+- A simple, black-box synonym-substitution attack (PWWS) with no gradient access already flips **34%** of correctly-caught prompts to benign while preserving their meaning.
+- TextFooler — which searches a larger candidate space under part-of-speech and semantic-similarity constraints — nearly doubles that to **62%**, suggesting the model's decision boundary is not robust to small, meaning-preserving lexical substitutions.
+- This is consistent with a well-documented pattern in NLP security research: neural text classifiers, including safety filters, are generally vulnerable to standard word-substitution attacks unless explicitly hardened against them (e.g. via adversarial training).
+
+**中文**
+- Prompt Guard 86M 在攻击前对已知注入样本的检出率很高（93.9%）——对训练时见过的模式识别得不错。
+- 一个不需要梯度信息的简单黑盒同义词替换攻击（PWWS），在保持原意的前提下，已经能让 **34%** 的样本从"被正确拦截"变成"被判定无害"。
+- 搜索空间更大、附加了词性和语义相似度约束的 TextFooler，把这个比例几乎翻倍到 **62%**，说明模型的决策边界对保持语义的小幅词汇替换并不鲁棒。
+- 这与NLP安全研究中一个已被广泛记录的现象一致：神经网络文本分类器（包括安全过滤器），如果没有专门针对性地做过对抗训练加固，通常都容易被标准的词级替换攻击攻破。
+
+---
+
+## Reproduction / 复现方法
 
 ```bash
 git clone https://github.com/MingzeLucasNi/prompt-guard-adversarial-attack.git
 cd prompt-guard-adversarial-attack
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-python -c "import nltk; nltk.download('averaged_perceptron_tagger_eng'); nltk.download('omw-1.4'); nltk.download('stopwords'); nltk.download('wordnet'); nltk.download('universal_tagset'); nltk.download('punkt')"
-python baseline.py
-python run_attack.py pwws
+python -c "import nltk; [nltk.download(p) for p in ['averaged_perceptron_tagger_eng','omw-1.4','stopwords','wordnet','universal_tagset','punkt']]"
+
+python baseline.py               # computes the 93.9% baseline, writes detected_injections.json
+python run_attack.py pwws        # ~15-30 min on CPU; seconds/example on a CUDA GPU
 python run_attack.py textfooler
-python run_attack.py clare
-python run_attack.py pso
+python run_attack.py clare       # slower; try --n 10 first
+python run_attack.py pso         # slower; try --n 10 first
+python compare_results.py        # prints a summary table across all attacks that have been run
 ```
 
-有 CUDA 的话代码会自动检测并使用（见上面"踩过的坑"第1条），不需要额外配置；
-`--n 50` 是默认值，CUDA 上应该比这台 Mac 快很多，不需要再分批小样本试跑。
+CUDA is used automatically when available (falls back to CPU otherwise). Each `run_attack.py <recipe>` writes its output to `results/<recipe>/`.
 
-生成的 `results_*.csv` / `summary_*.json` / `details_*.json` / `report_*.md`
-默认被 `.gitignore` 排除掉了（属于"跑一次生成一次"的产物，不同机器/参数
-跑出来的数字会不一样，没必要塞进版本历史）。如果想把服务器上跑出来的结果
-带回本地看，直接 `scp` 或者手动 `git add -f` 这几个文件再 commit 都可以。
+有 CUDA 会自动使用，否则回退到 CPU。每次 `run_attack.py <recipe>` 的结果都会写入 `results/<recipe>/` 文件夹。
 
-## 术语说明（避免和"baseline"数字搞混）
+---
 
-- `baseline.py` 里的 93.92% 是模型在**整个数据集**上、攻击前的检出率。
-- 每个 `run_attack.py <recipe>` 里的 "n_attempted" 都是从已经被正确检出的
-  247条里抽样 50条，所以这一层的"攻击前检出率"恒为 100%（因为样本本来就是
-  从"已被检出"的池子里选的）——真正有意义的数字是 `attack_success_rate_pct`，
-  即攻击后有多少比例从"被拦截"变成"被判定为BENIGN"。
-- "攻击后检出率" = 100% - 攻击成功率，即攻防两方视角下 Prompt Guard 在该
-  攻击方法下的鲁棒检出率。
+## Project Structure / 项目结构
+
+```
+baseline.py           # computes pre-attack detection rate, selects attack seeds
+run_attack.py          # runs one of the 4 attacks end-to-end
+custom_recipes.py       # TF-free TextFooler/CLARE variants (sentence-transformers instead of USE)
+sbert_encoder.py        # the sentence-transformers-based semantic similarity constraint
+detailed_report.py      # turns raw attack results into details.json + report.md
+compare_results.py      # prints a summary table across all attacks that have been run
+detected_injections.json  # cached list of prompts Prompt Guard correctly flags (attack seed pool)
+results/<recipe>/        # summary.json, details.json, report.md, results.csv per attack
+```
+
+---
+
+## Limitations / 局限性
+
+**EN**
+- Sample size is 50 prompts per attack; a larger sample would give tighter confidence intervals on the success-rate estimates.
+- CLARE and PSO are not yet run to completion (both are search-heavy and compute-intensive); this README will be updated once those results are in.
+- The semantic-similarity constraint for TextFooler/CLARE is a PyTorch substitute for the original TensorFlow-based USE constraint, so absolute numbers may differ slightly from the original papers' reported results.
+- Results reflect this specific model snapshot (Prompt Guard 86M); Meta's newer Prompt Guard 2 models were not evaluated here.
+
+**中文**
+- 每种攻击样本量为50条，更大的样本量能让成功率估计的置信区间更紧。
+- CLARE 和 PSO 尚未跑完（两者都是搜索密集型、计算量大），后续结果会更新到本文档。
+- TextFooler/CLARE 的语义相似度约束用 PyTorch 方案替代了原论文基于 TensorFlow 的 USE 约束，因此绝对数值可能与原论文报告的结果略有出入。
+- 结果只反映 Prompt Guard 86M 这一个模型快照，未评测 Meta 更新的 Prompt Guard 2 系列。
+
+---
+
+## References / 参考文献
+
+- Ren, S., Deng, Y., He, K., & Che, W. (2019). *Generating Natural Language Adversarial Examples through Probability Weighted Word Saliency.* ACL. (PWWS)
+- Jin, D., Jin, Z., Zhou, J. T., & Szolovits, P. (2020). *Is BERT Really Robust? A Strong Baseline for Natural Language Attack on Text Classification and Entailment.* AAAI. (TextFooler)
+- Li, D., Zhang, Y., Peng, H., Chen, L., Brockett, C., Sun, M. T., & Dolan, B. (2021). *Contextualized Perturbation for Textual Adversarial Attack.* NAACL. (CLARE)
+- Zang, Y., Qi, F., Yang, C., Liu, Z., Zhang, M., Liu, Q., & Sun, M. (2020). *Word-level Textual Adversarial Attacking as Combinatorial Optimization.* ACL. (PSO)
+- Morris, J., Lifland, E., Yoo, J. Y., Grigsby, J., Jin, D., & Qi, Y. (2020). *TextAttack: A Framework for Adversarial Attacks, Data Augmentation, and Adversarial Training in NLP.* EMNLP.

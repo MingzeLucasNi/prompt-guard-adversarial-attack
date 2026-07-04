@@ -103,13 +103,16 @@ def main():
         built.search_method,
     )
 
+    out_dir = os.path.join("results", args.recipe)
+    os.makedirs(out_dir, exist_ok=True)
+
     attack_args = AttackArgs(
         num_examples=len(sample),
         query_budget=args.query_budget,
         random_seed=args.seed,
         shuffle=False,
         disable_stdout=False,
-        log_to_csv=f"results_{args.recipe}.csv",
+        log_to_csv=os.path.join(out_dir, "results.csv"),
         # "file" wraps every changed word in [[ ]] in both the CSV and the
         # detailed report below, so exactly what got perturbed is visible
         # without needing a diff tool.
@@ -119,7 +122,7 @@ def main():
     attacker = Attacker(attack, dataset, attack_args)
     results = attacker.attack_dataset()
 
-    write_detailed_outputs(args.recipe, results, id2label)
+    write_detailed_outputs(args.recipe, results, id2label, out_dir)
 
     n_total = len(results)
     n_skipped = sum(1 for r in results if isinstance(r, textattack.attack_results.SkippedAttackResult))
@@ -140,14 +143,14 @@ def main():
     }
     print("\nSUMMARY_JSON:" + json.dumps(summary))
 
-    with open(f"summary_{args.recipe}.json", "w") as f:
+    with open(os.path.join(out_dir, "summary.json"), "w") as f:
         json.dump(summary, f, indent=2)
 
-    print(f"\nSaved outputs for '{args.recipe}':")
-    print(f"  summary_{args.recipe}.json   - 数字汇总（攻击成功率等）")
-    print(f"  details_{args.recipe}.json   - 逐条结构化数据（标签/置信度/改动的词/完整文本）")
-    print(f"  report_{args.recipe}.md      - 逐条人类可读报告，改动处用 [[ ]] 标出")
-    print(f"  results_{args.recipe}.csv    - TextAttack 原始日志（同样带 [[ ]] 标记）")
+    print(f"\nSaved outputs to {out_dir}/:")
+    print("  summary.json  - aggregate numbers (attack success rate, etc.)")
+    print("  details.json  - structured per-example data (labels/confidence/changed words/full text)")
+    print("  report.md     - human-readable per-example report, changes marked with [[ ]]")
+    print("  results.csv   - raw TextAttack log (same [[ ]] markup)")
 
 
 if __name__ == "__main__":

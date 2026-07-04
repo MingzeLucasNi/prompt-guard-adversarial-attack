@@ -1,14 +1,15 @@
 """
 Turn a list of textattack AttackResult objects into two persistent,
-easy-to-inspect artifacts:
+easy-to-inspect artifacts written to results/<recipe>/:
 
-- details_<recipe>.json: one structured record per example (labels,
-  confidences, full before/after text, and the exact words that changed).
-- report_<recipe>.md: the same data as a human-readable Markdown file, with
-  an overview table up top and one section per example below it, changed
+- details.json: one structured record per example (labels, confidences,
+  full before/after text, and the exact words that changed).
+- report.md: the same data as a human-readable Markdown file, with an
+  overview table up top and one section per example below it, changed
   words marked inline with [[ ]].
 """
 import json
+import os
 import re
 
 BRACKET_RE = re.compile(r"\[\[(.*?)\]\]")
@@ -64,11 +65,11 @@ def write_json(records, path):
 
 
 def write_markdown(records, recipe, path):
-    lines = [f"# {recipe} — 逐条攻击详情\n"]
+    lines = [f"# {recipe} — per-example attack results\n"]
 
-    lines.append("## 总览\n")
-    lines.append("| # | 结果 | 攻击前 | 攻击前P(BENIGN) | 攻击后 | 攻击后P(BENIGN) | 查询次数 |")
-    lines.append("|---|------|--------|------------------|--------|------------------|----------|")
+    lines.append("## Overview\n")
+    lines.append("| # | Result | Before | P(BENIGN) before | After | P(BENIGN) after | Queries |")
+    lines.append("|---|--------|--------|-------------------|-------|-------------------|---------|")
     for r in records:
         lines.append(
             f"| {r['index']} | {r['result_type']} | {r['original_label']} "
@@ -77,27 +78,27 @@ def write_markdown(records, recipe, path):
             f"{r['num_queries']} |"
         )
 
-    lines.append("\n## 逐条详情\n")
+    lines.append("\n## Per-example detail\n")
     for r in records:
         lines.append(f"### Example {r['index']} — {r['result_type']}\n")
         lines.append(
-            f"- 攻击前判定: **{r['original_label']}** "
-            f"(置信度 {r['original_confidence']:.1%}, P(BENIGN)={r['original_p_benign']:.1%})"
+            f"- Before attack: **{r['original_label']}** "
+            f"(confidence {r['original_confidence']:.1%}, P(BENIGN)={r['original_p_benign']:.1%})"
         )
         lines.append(
-            f"- 攻击后判定: **{r['final_label']}** "
-            f"(置信度 {r['final_confidence']:.1%}, P(BENIGN)={r['final_p_benign']:.1%})"
+            f"- After attack: **{r['final_label']}** "
+            f"(confidence {r['final_confidence']:.1%}, P(BENIGN)={r['final_p_benign']:.1%})"
         )
-        lines.append(f"- 是否成功逃逸到 BENIGN: {'是' if r['evaded_to_benign'] else '否'}")
-        lines.append(f"- 查询次数: {r['num_queries']}")
+        lines.append(f"- Evaded to BENIGN: {'yes' if r['evaded_to_benign'] else 'no'}")
+        lines.append(f"- Queries used: {r['num_queries']}")
         if r["removed_words"] or r["added_words"]:
-            lines.append(f"- 被删掉/替换掉的原词: {r['removed_words']}")
-            lines.append(f"- 替换成/新插入的词: {r['added_words']}")
+            lines.append(f"- Original words changed: {r['removed_words']}")
+            lines.append(f"- Replaced/inserted with: {r['added_words']}")
         else:
-            lines.append("- 没有做出任何改动（未成功找到扰动）")
-        lines.append("\n**原文（`[[ ]]` 标出改动处）:**\n")
+            lines.append("- No perturbation found (attack made no changes)")
+        lines.append("\n**Original text (`[[ ]]` marks changed words):**\n")
         lines.append(f"> {r['original_text_marked']}\n")
-        lines.append("**攻击后文本:**\n")
+        lines.append("**Perturbed text:**\n")
         lines.append(f"> {r['perturbed_text_marked']}\n")
         lines.append("---\n")
 
@@ -105,7 +106,8 @@ def write_markdown(records, recipe, path):
         f.write("\n".join(lines))
 
 
-def write_detailed_outputs(recipe, results, id2label):
+def write_detailed_outputs(recipe, results, id2label, out_dir):
+    os.makedirs(out_dir, exist_ok=True)
     records = build_records(results, id2label)
-    write_json(records, f"details_{recipe}.json")
-    write_markdown(records, recipe, f"report_{recipe}.md")
+    write_json(records, os.path.join(out_dir, "details.json"))
+    write_markdown(records, recipe, os.path.join(out_dir, "report.md"))
