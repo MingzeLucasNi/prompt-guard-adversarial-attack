@@ -10,6 +10,10 @@ RECIPES = [
     "pso_wordnet",
     "cea_wordnet_mlm",
     "cea_textfooler",
+    "cea_wordnet_mlm_reg",
+    "cea_textfooler_reg",
+    "cea_wordnet_mlm_q1000",
+    "cea_textfooler_q1000",
 ]
 
 def main():

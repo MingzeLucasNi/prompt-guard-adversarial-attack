@@ -25,11 +25,14 @@ At each iteration:
   1. Sample `num_candidates` full-text candidates: for every i in I,
      independently draw a substitution from theta_i (every editable
      position is always substituted, per the paper -- there is no
-     "leave unchanged" option once a position is in I).
+     "leave unchanged" option once a position is in I, unless an experimental
+     recipe enables `allow_unchanged`).
   2. Score each candidate x~ by f(x~; x) = m(F(x~)) * Sim(x~, x), where
      m(F(x~)) is the goal function's targeted-class score (already
      evaluates the objective in Eq. 5/6 of the paper) and Sim is cosine
-     similarity between sentence-transformer embeddings.
+     similarity between sentence-transformer embeddings. Experimental
+     regularized recipes additionally multiply by a modification-count
+     penalty.
   3. Keep the top `rho` fraction of candidates by score ("elite").
   4. Re-estimate each theta_i by maximum likelihood over the elite set
      (Eq. 19): the probability of each candidate word is its frequency
@@ -54,11 +57,15 @@ class CrossEntropySearch(SearchMethod):
         rho=0.5,
         max_iters=50,
         sim_model_name="all-MiniLM-L6-v2",
+        allow_unchanged=False,
+        modification_penalty_alpha=0.0,
     ):
         self.num_candidates = num_candidates
         self.rho = rho
         self.max_iters = max_iters
         self._sim_model_name = sim_model_name
+        self.allow_unchanged = allow_unchanged
+        self.modification_penalty_alpha = modification_penalty_alpha
         self._sim_model = None
         self._search_over = False
 
@@ -101,6 +108,12 @@ class CrossEntropySearch(SearchMethod):
         if not editable_positions:
             return initial_result
 
+        if self.allow_unchanged:
+            for i in editable_positions:
+                original_word = original_text.words[i]
+                if original_word not in position_words[i]:
+                    position_words[i].append(original_word)
+
         # theta[i]: categorical distribution over position_words[i] (Eq. 12),
         # initialized uniformly (Eq. 20).
         theta = {
@@ -120,8 +133,10 @@ class CrossEntropySearch(SearchMethod):
                 for i in editable_positions:
                     j = int(np.random.choice(len(theta[i]), p=theta[i]))
                     choice[i] = j
-                    indices.append(i)
-                    words.append(position_words[i][j])
+                    word = position_words[i][j]
+                    if word != original_text.words[i]:
+                        indices.append(i)
+                        words.append(word)
                 choices.append(choice)
                 candidate_texts.append(original_text.replace_words_at_indices(indices, words))
 
@@ -137,6 +152,22 @@ class CrossEntropySearch(SearchMethod):
                 original_text.text, [r.attacked_text.text for r in results]
             )
             scores = m_scores * sims
+            if self.modification_penalty_alpha > 0:
+                changed_counts = np.array(
+                    [
+                        sum(
+                            position_words[i][choice[i]] != original_text.words[i]
+                            for i in editable_positions
+                        )
+                        for choice in choices
+                    ],
+                    dtype=float,
+                )
+                changed_ratios = changed_counts / max(1, len(original_text.words))
+                penalties = np.power(
+                    1.0 - changed_ratios, self.modification_penalty_alpha
+                )
+                scores = scores * penalties
 
             top_i = int(np.argmax(scores))
             if scores[top_i] > best_score:
@@ -173,4 +204,10 @@ class CrossEntropySearch(SearchMethod):
         return True
 
     def extra_repr_keys(self):
-        return ["num_candidates", "rho", "max_iters"]
+        return [
+            "num_candidates",
+            "rho",
+            "max_iters",
+            "allow_unchanged",
+            "modification_penalty_alpha",
+        ]

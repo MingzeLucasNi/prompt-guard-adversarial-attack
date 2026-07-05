@@ -1,0 +1,14 @@
+{
+  "recipe": "cea_wordnet_mlm",
+  "output_name": "cea_wordnet_mlm_q1000",
+  "query_budget": 1000,
+  "seed": 42,
+  "n_total_sampled": 50,
+  "n_skipped_already_evading_or_error": 0,
+  "n_attempted": 50,
+  "n_success_evaded": 32,
+  "n_still_detected_after_attack": 18,
+  "baseline_detection_rate_pct": 100.0,
+  "attack_success_rate_pct": 64.0,
+  "post_attack_detection_rate_pct": 36.0
+}

@@ -22,6 +22,8 @@ Custom attack recipes for this project:
   word-embedding substitution candidates and its POS / semantic-similarity
   filters. This keeps CEA's optimizer while testing a more TextFooler-like,
   less WordNet-dependent candidate-generation strategy.
+- Experimental CEA regularized variants add a "keep original word" option and
+  penalize candidates that modify a large fraction of words.
 """
 import transformers
 from textattack import Attack
@@ -153,6 +155,23 @@ def build_cea_wordnet_mlm(model_wrapper):
     return Attack(goal_function, constraints, transformation, search_method)
 
 
+def build_cea_wordnet_mlm_reg(model_wrapper):
+    attack = build_cea_wordnet_mlm(model_wrapper)
+    search_method = CrossEntropySearch(
+        num_candidates=100,
+        rho=0.5,
+        max_iters=50,
+        allow_unchanged=True,
+        modification_penalty_alpha=2.0,
+    )
+    return Attack(
+        attack.goal_function,
+        attack.constraints + attack.pre_transformation_constraints,
+        attack.transformation,
+        search_method,
+    )
+
+
 def build_cea_textfooler(model_wrapper):
     transformation = WordSwapEmbedding(max_candidates=50)
     constraints = _textfooler_constraints()
@@ -162,5 +181,22 @@ def build_cea_textfooler(model_wrapper):
         goal_function,
         constraints,
         transformation,
+        search_method,
+    )
+
+
+def build_cea_textfooler_reg(model_wrapper):
+    attack = build_cea_textfooler(model_wrapper)
+    search_method = CrossEntropySearch(
+        num_candidates=100,
+        rho=0.5,
+        max_iters=50,
+        allow_unchanged=True,
+        modification_penalty_alpha=2.0,
+    )
+    return Attack(
+        attack.goal_function,
+        attack.constraints + attack.pre_transformation_constraints,
+        attack.transformation,
         search_method,
     )

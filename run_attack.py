@@ -70,7 +70,9 @@ from textattack.goal_functions.classification import TargetedClassification
 from textattack.models.wrappers import HuggingFaceModelWrapper
 
 from custom_recipes import (
+    build_cea_textfooler_reg,
     build_cea_textfooler,
+    build_cea_wordnet_mlm_reg,
     build_cea_wordnet_mlm,
     build_clare,
     build_pso_wordnet,
@@ -94,6 +96,8 @@ RECIPE_BUILDERS = {
     "pso_wordnet": build_pso_wordnet,
     "cea_wordnet_mlm": build_cea_wordnet_mlm,
     "cea_textfooler": build_cea_textfooler,
+    "cea_wordnet_mlm_reg": build_cea_wordnet_mlm_reg,
+    "cea_textfooler_reg": build_cea_textfooler_reg,
 }
 
 
@@ -103,7 +107,12 @@ def main():
     parser.add_argument("--n", type=int, default=50, help="number of seed examples to attack")
     parser.add_argument("--query-budget", type=int, default=1000)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--output-name",
+        help="results/<output-name>/ directory name (defaults to the recipe name)",
+    )
     args = parser.parse_args()
+    output_name = args.output_name or args.recipe
 
     # Real CUDA GPUs (e.g. a server) are used when available. MPS (Apple GPU)
     # is deliberately skipped even when present: it recompiles its Metal graph
@@ -147,7 +156,7 @@ def main():
         built.search_method,
     )
 
-    out_dir = os.path.join("results", args.recipe)
+    out_dir = os.path.join("results", output_name)
     os.makedirs(out_dir, exist_ok=True)
 
     attack_args = AttackArgs(
@@ -166,7 +175,7 @@ def main():
     attacker = Attacker(attack, dataset, attack_args)
     results = attacker.attack_dataset()
 
-    write_detailed_outputs(args.recipe, results, id2label, out_dir)
+    write_detailed_outputs(output_name, results, id2label, out_dir)
 
     n_total = len(results)
     n_skipped = sum(1 for r in results if isinstance(r, textattack.attack_results.SkippedAttackResult))
@@ -176,6 +185,9 @@ def main():
 
     summary = {
         "recipe": args.recipe,
+        "output_name": output_name,
+        "query_budget": args.query_budget,
+        "seed": args.seed,
         "n_total_sampled": n_total,
         "n_skipped_already_evading_or_error": n_skipped,
         "n_attempted": n_attempted,
