@@ -16,6 +16,28 @@ import os
 os.environ.setdefault("USE_TF", "0")
 os.environ.setdefault("USE_TORCH", "1")
 
+PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+LOCAL_CACHE_DIR = os.path.join(PROJECT_DIR, ".cache")
+os.environ.setdefault("HF_HOME", os.path.join(LOCAL_CACHE_DIR, "huggingface"))
+os.environ.setdefault(
+    "HF_DATASETS_CACHE", os.path.join(LOCAL_CACHE_DIR, "huggingface", "datasets")
+)
+os.environ.setdefault(
+    "SENTENCE_TRANSFORMERS_HOME",
+    os.path.join(LOCAL_CACHE_DIR, "sentence-transformers"),
+)
+os.environ.setdefault("NLTK_DATA", os.path.join(LOCAL_CACHE_DIR, "nltk"))
+os.environ.setdefault("MPLCONFIGDIR", os.path.join(LOCAL_CACHE_DIR, "matplotlib"))
+
+for cache_dir in (
+    os.environ["HF_HOME"],
+    os.environ["HF_DATASETS_CACHE"],
+    os.environ["SENTENCE_TRANSFORMERS_HOME"],
+    os.environ["NLTK_DATA"],
+    os.environ["MPLCONFIGDIR"],
+):
+    os.makedirs(cache_dir, exist_ok=True)
+
 import collections
 import json
 

@@ -7,8 +7,9 @@ Usage:
     python run_attack.py pwws
     python run_attack.py textfooler
     python run_attack.py clare
-    python run_attack.py pso
-    python run_attack.py cea
+    python run_attack.py pso_wordnet
+    python run_attack.py cea_wordnet_mlm
+    python run_attack.py cea_textfooler
 
 Requires detected_injections.json (produced by baseline.py) to already exist.
 """
@@ -17,6 +18,30 @@ import os
 # Must be set before `transformers`/`textattack` are imported (see baseline.py).
 os.environ.setdefault("USE_TF", "0")
 os.environ.setdefault("USE_TORCH", "1")
+
+PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+LOCAL_CACHE_DIR = os.path.join(PROJECT_DIR, ".cache")
+os.environ.setdefault("TA_CACHE_DIR", os.path.join(LOCAL_CACHE_DIR, "textattack"))
+os.environ.setdefault("HF_HOME", os.path.join(LOCAL_CACHE_DIR, "huggingface"))
+os.environ.setdefault(
+    "HF_DATASETS_CACHE", os.path.join(LOCAL_CACHE_DIR, "huggingface", "datasets")
+)
+os.environ.setdefault(
+    "SENTENCE_TRANSFORMERS_HOME",
+    os.path.join(LOCAL_CACHE_DIR, "sentence-transformers"),
+)
+os.environ.setdefault("NLTK_DATA", os.path.join(LOCAL_CACHE_DIR, "nltk"))
+os.environ.setdefault("MPLCONFIGDIR", os.path.join(LOCAL_CACHE_DIR, "matplotlib"))
+
+for cache_dir in (
+    os.environ["TA_CACHE_DIR"],
+    os.environ["HF_HOME"],
+    os.environ["HF_DATASETS_CACHE"],
+    os.environ["SENTENCE_TRANSFORMERS_HOME"],
+    os.environ["NLTK_DATA"],
+    os.environ["MPLCONFIGDIR"],
+):
+    os.makedirs(cache_dir, exist_ok=True)
 
 import argparse
 import json
@@ -28,7 +53,14 @@ from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 # TextFooler/CLARE's PartOfSpeech constraint needs this specific tagger data;
 # fetch it once up front instead of crashing mid-attack on a cache miss.
-nltk.download("averaged_perceptron_tagger_eng", quiet=True)
+try:
+    nltk.data.find("taggers/averaged_perceptron_tagger_eng")
+except LookupError:
+    nltk.download(
+        "averaged_perceptron_tagger_eng",
+        download_dir=os.environ["NLTK_DATA"],
+        quiet=True,
+    )
 
 import textattack
 from textattack import AttackArgs, Attacker
@@ -37,24 +69,31 @@ from textattack.datasets import Dataset
 from textattack.goal_functions.classification import TargetedClassification
 from textattack.models.wrappers import HuggingFaceModelWrapper
 
-from custom_recipes import build_cea, build_clare, build_pso, build_textfooler
+from custom_recipes import (
+    build_cea_textfooler,
+    build_cea_wordnet_mlm,
+    build_clare,
+    build_pso_wordnet,
+    build_textfooler,
+)
 from detailed_report import write_detailed_outputs
 
 MODEL = "Niansuh/Prompt-Guard-86M"
 DETECTED_FILE = "detected_injections.json"
 
-# textfooler/clare/pso/cea all use custom builders (see custom_recipes.py):
+# textfooler/clare/pso_wordnet/cea_* all use custom builders (see custom_recipes.py):
 # textfooler/clare avoid textattack's tensorflow_hub-based USE constraint
-# (plain `import tensorflow` crashes outright on this machine); pso uses
-# WordNet instead of HowNet for substitutions (HowNet gave a near-empty
-# candidate pool -- 0/50 evasions, see results/pso/); cea is our own
-# Cross-Entropy Attack ported into a native TextAttack SearchMethod.
+# (plain `import tensorflow` crashes outright on this machine); pso_wordnet
+# uses WordNet instead of HowNet for substitutions (HowNet gave a near-empty
+# candidate pool -- 0/50 evasions, see results/pso_hownet/). The CEA variants
+# share the same Cross-Entropy SearchMethod but use different candidate sources.
 RECIPE_BUILDERS = {
     "pwws": PWWSRen2019.build,
     "textfooler": build_textfooler,
     "clare": build_clare,
-    "pso": build_pso,
-    "cea": build_cea,
+    "pso_wordnet": build_pso_wordnet,
+    "cea_wordnet_mlm": build_cea_wordnet_mlm,
+    "cea_textfooler": build_cea_textfooler,
 }
 
 

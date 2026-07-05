@@ -15,9 +15,10 @@ are directly comparable.
 
 Algorithm, per position i in the editable set I:
   - S_i: substitution candidates for position i, taken from whatever
-    Transformation + constraints are attached to the Attack (here:
-    WordNet synonyms UNION RoBERTa masked-LM predictions -- see
-    custom_recipes.build_cea).
+    Transformation + constraints are attached to the Attack. In this repo,
+    `cea_wordnet_mlm` uses WordNet UNION RoBERTa masked-LM candidates, while
+    `cea_textfooler` uses TextFooler's word-embedding candidates; both are
+    filtered by the recipe's constraints before CEA sees them.
   - theta_i: a categorical distribution over S_i, initialized uniformly.
 
 At each iteration:

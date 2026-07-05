@@ -1,5 +1,5 @@
 {
-  "recipe": "pso",
+  "recipe": "pso_hownet",
   "n_total_sampled": 50,
   "n_skipped_already_evading_or_error": 0,
   "n_attempted": 50,

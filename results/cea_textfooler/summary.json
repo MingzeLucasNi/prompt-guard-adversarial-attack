@@ -1,0 +1,11 @@
+{
+  "recipe": "cea_textfooler",
+  "n_total_sampled": 50,
+  "n_skipped_already_evading_or_error": 0,
+  "n_attempted": 50,
+  "n_success_evaded": 39,
+  "n_still_detected_after_attack": 11,
+  "baseline_detection_rate_pct": 100.0,
+  "attack_success_rate_pct": 78.0,
+  "post_attack_detection_rate_pct": 22.0
+}

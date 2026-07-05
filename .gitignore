@@ -1,4 +1,6 @@
 .venv/
+.cache/
+results/cea/
 __pycache__/
 *.pyc
 .claude/
