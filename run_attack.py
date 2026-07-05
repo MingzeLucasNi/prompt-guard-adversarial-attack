@@ -8,6 +8,7 @@ Usage:
     python run_attack.py textfooler
     python run_attack.py clare
     python run_attack.py pso
+    python run_attack.py cea
 
 Requires detected_injections.json (produced by baseline.py) to already exist.
 """
@@ -31,25 +32,29 @@ nltk.download("averaged_perceptron_tagger_eng", quiet=True)
 
 import textattack
 from textattack import AttackArgs, Attacker
-from textattack.attack_recipes import PSOZang2020, PWWSRen2019
+from textattack.attack_recipes import PWWSRen2019
 from textattack.datasets import Dataset
 from textattack.goal_functions.classification import TargetedClassification
 from textattack.models.wrappers import HuggingFaceModelWrapper
 
-from custom_recipes import build_clare, build_textfooler
+from custom_recipes import build_cea, build_clare, build_pso, build_textfooler
 from detailed_report import write_detailed_outputs
 
 MODEL = "Niansuh/Prompt-Guard-86M"
 DETECTED_FILE = "detected_injections.json"
 
-# textfooler/clare use custom TF-free builders (see custom_recipes.py) instead
-# of textattack's built-in recipes, which depend on tensorflow_hub -- and
-# plain `import tensorflow` crashes outright on this machine.
+# textfooler/clare/pso/cea all use custom builders (see custom_recipes.py):
+# textfooler/clare avoid textattack's tensorflow_hub-based USE constraint
+# (plain `import tensorflow` crashes outright on this machine); pso uses
+# WordNet instead of HowNet for substitutions (HowNet gave a near-empty
+# candidate pool -- 0/50 evasions, see results/pso/); cea is our own
+# Cross-Entropy Attack ported into a native TextAttack SearchMethod.
 RECIPE_BUILDERS = {
     "pwws": PWWSRen2019.build,
     "textfooler": build_textfooler,
     "clare": build_clare,
-    "pso": PSOZang2020.build,
+    "pso": build_pso,
+    "cea": build_cea,
 }
 
 

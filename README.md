@@ -3,15 +3,15 @@
 
 Evaluating how well Meta's open-source prompt-injection/jailbreak classifier holds up under standard, published adversarial NLP attacks.
 
-用四种经典对抗NLP攻击方法，评测 Meta 开源的 prompt injection / jailbreak 分类器的鲁棒性。
+用五种对抗NLP攻击方法，评测 Meta 开源的 prompt injection / jailbreak 分类器的鲁棒性。
 
 ---
 
 ## Overview / 项目简介
 
-**EN** — This project measures the adversarial robustness of [Prompt Guard 86M](https://huggingface.co/meta-llama/Prompt-Guard-86M), Meta's open-weight classifier for detecting prompt injection and jailbreak attempts. Using the [TextAttack](https://github.com/QData/TextAttack) framework, four well-established word-substitution attack algorithms from the adversarial NLP literature — **PWWS**, **TextFooler**, **CLARE**, and **PSO** — are applied to prompts the model already correctly flags as malicious, to see how many can be rewritten (while preserving their original meaning) into text the model misclassifies as benign.
+**EN** — This project measures the adversarial robustness of [Prompt Guard 86M](https://huggingface.co/meta-llama/Prompt-Guard-86M), Meta's open-weight classifier for detecting prompt injection and jailbreak attempts. Using the [TextAttack](https://github.com/QData/TextAttack) framework, five word-substitution attack algorithms from the adversarial NLP literature — **PWWS**, **TextFooler**, **CLARE**, **PSO**, and **CEA** (our own Cross-Entropy Attack) — are applied to prompts the model already correctly flags as malicious, to see how many can be rewritten (while preserving their original meaning) into text the model misclassifies as benign.
 
-**中文** — 本项目评测 Meta 开源的 prompt injection / jailbreak 分类器 [Prompt Guard 86M](https://huggingface.co/meta-llama/Prompt-Guard-86M) 的对抗鲁棒性。使用 [TextAttack](https://github.com/QData/TextAttack) 框架，对已经被模型正确判定为恶意的 prompt，应用四种对抗NLP文献中的经典词级替换攻击算法——**PWWS**、**TextFooler**、**CLARE**、**PSO**——衡量在保持原意的前提下，有多少比例可以被改写成模型误判为无害的文本。
+**中文** — 本项目评测 Meta 开源的 prompt injection / jailbreak 分类器 [Prompt Guard 86M](https://huggingface.co/meta-llama/Prompt-Guard-86M) 的对抗鲁棒性。使用 [TextAttack](https://github.com/QData/TextAttack) 框架，对已经被模型正确判定为恶意的 prompt，应用五种对抗NLP文献中的词级替换攻击算法——**PWWS**、**TextFooler**、**CLARE**、**PSO**，以及我们自己提出的 **CEA**（Cross-Entropy Attack）——衡量在保持原意的前提下，有多少比例可以被改写成模型误判为无害的文本。
 
 ---
 
@@ -44,9 +44,11 @@ Evaluating how well Meta's open-source prompt-injection/jailbreak classifier hol
   - **PWWS** (Ren et al., 2019) — WordNet synonym substitution guided by word saliency.
   - **TextFooler** (Jin et al., 2020) — counter-fitted word-embedding substitution with POS and semantic-similarity constraints.
   - **CLARE** (Li et al., 2021) — contextualized replace/insert/merge perturbations via a masked language model.
-  - **PSO** (Zang et al., 2020) — particle swarm optimization over HowNet sense-based synonym substitutions.
-- **Sample size**: 50 randomly sampled prompts per attack (from the 247 correctly-detected examples), query budget 1000 per example.
-- For TextFooler/CLARE, the semantic-similarity constraint is implemented with a PyTorch `sentence-transformers` model rather than the original papers' TensorFlow-based Universal Sentence Encoder, for environment portability (no functional difference to the attack's goal).
+  - **PSO** (Zang et al., 2020) — particle swarm optimization over synonym substitutions. Originally proposed with HowNet sememe-based synonyms; here it uses **WordNet** instead (see note below).
+  - **CEA** (Ni, Gong, & Liu — [Cross-Entropy Attacks to Language Models via Rare Event Simulation](https://github.com/MingzeLucasNi/CE-Attack)) — our own attack, ported from its reference implementation into a native TextAttack `SearchMethod` (`cea_search.py`) so it runs through the exact same pipeline as the other four. It treats adversarial-example generation as a rare-event simulation: a categorical substitution distribution per editable word position is refined over iterations by repeatedly sampling candidate texts, scoring them by `m(F(x̃)) · Sim(x̃, x)` (targeted-class score times sentence-embedding similarity to the original), and re-fitting each position's distribution by maximum likelihood on the top-`ρ` "elite" samples.
+- **Substitution source, unified across PSO and CEA**: both originally relied on HowNet, whose sememe-annotated synonym sets turned out to be sparse for this kind of English text (see PSO's 0% result below). Both now draw from **WordNet synonyms ∪ RoBERTa masked-language-model predictions** — a deliberately larger candidate pool per position than the original papers, so search quality isn't bottlenecked by a thin substitution vocabulary.
+- **Sample size**: 50 randomly sampled prompts per attack (from the 247 correctly-detected examples), query budget 1000 per example (CEA needs a higher budget to reach its full 50-iteration schedule — see Reproduction).
+- For TextFooler/CLARE, the semantic-similarity constraint is implemented with a PyTorch `sentence-transformers` model rather than the original papers' TensorFlow-based Universal Sentence Encoder, for environment portability (no functional difference to the attack's goal). CEA's objective uses the same `sentence-transformers` model for its similarity term.
 
 **中文**
 - **目标模型**：Prompt Guard 86M（三分类：`BENIGN` / `INJECTION` / `JAILBREAK`），使用官方权重的原样公开镜像。
@@ -57,9 +59,11 @@ Evaluating how well Meta's open-source prompt-injection/jailbreak classifier hol
   - **PWWS**（Ren et al., 2019）——基于词语显著性的 WordNet 同义词替换。
   - **TextFooler**（Jin et al., 2020）——反义词过滤词向量替换，附加词性和语义相似度约束。
   - **CLARE**（Li et al., 2021）——基于掩码语言模型的上下文感知替换/插入/合并扰动。
-  - **PSO**（Zang et al., 2020）——基于 HowNet 义原的同义词替换 + 粒子群优化搜索。
-- **样本规模**：每种攻击从247条已正确检出的样本中随机抽取50条，每条查询预算1000次。
-- TextFooler/CLARE 的语义相似度约束改用基于 PyTorch 的 `sentence-transformers` 模型实现，而非原论文中基于 TensorFlow 的 Universal Sentence Encoder（纯粹是为了环境可移植性，攻击目标本身没有变化）。
+  - **PSO**（Zang et al., 2020）——同义词替换 + 粒子群优化搜索。原论文用 HowNet 义原同义词，这里改用 **WordNet**（原因见下）。
+  - **CEA**（Ni, Gong, Liu ——[Cross-Entropy Attacks to Language Models via Rare Event Simulation](https://github.com/MingzeLucasNi/CE-Attack)）——我们自己的攻击方法，从原始参考实现移植成了原生的 TextAttack `SearchMethod`（`cea_search.py`），跑在和其他四种攻击完全一样的流程里，方便直接对比。核心思路是把生成对抗样本看作稀有事件模拟：给每个可编辑的词位置维护一个替换词的类别分布，反复采样候选文本、用 `m(F(x̃))·Sim(x̃,x)`（目标类别得分 × 与原文的句向量相似度）打分，取分数最高的前 `ρ` 比例作为"精英样本"，再用极大似然估计更新每个位置的分布，如此迭代。
+- **PSO 和 CEA 统一了替换词来源**：两者原本都依赖 HowNet，但其义原标注的同义词集合对这类英文文本来说太稀疏了（下面 PSO 的 0% 结果就是证据）。现在两者都改用 **WordNet 同义词 ∪ RoBERTa 掩码语言模型预测**——比原论文更大的候选词池，避免搜索质量被过窄的替换词表卡住。
+- **样本规模**：每种攻击从247条已正确检出的样本中随机抽取50条，每条查询预算1000次（CEA 想跑满50轮迭代需要更高的预算，见"复现方法"）。
+- TextFooler/CLARE 的语义相似度约束改用基于 PyTorch 的 `sentence-transformers` 模型实现，而非原论文中基于 TensorFlow 的 Universal Sentence Encoder（纯粹是为了环境可移植性，攻击目标本身没有变化）。CEA 的目标函数里的相似度项也用的同一个 `sentence-transformers` 模型。
 
 ---
 
@@ -70,10 +74,16 @@ Evaluating how well Meta's open-source prompt-injection/jailbreak classifier hol
 | *Baseline (no attack)* | 263 | — | 247 (93.9%) | — |
 | **PWWS** | 50 | 17 | 33 | **34.0%** |
 | **TextFooler** | 50 | 31 | 19 | **62.0%** |
-| **PSO** | 50 | 0 | 50 | **0.0%** |
+| **PSO** (HowNet, superseded) | 50 | 0 | 50 | 0.0% |
+| **PSO** (WordNet, current code) | — | — | — | pending re-run |
+| **CEA** | — | — | — | pending (running on a GPU server; too slow on CPU) |
 | **CLARE** | — | — | — | pending (running on a GPU server; too slow on CPU) |
 
+`results/pso/` currently still holds the **old HowNet-based** run (0% — see Key Findings); the code has since switched PSO to WordNet (see Methodology), so this number needs a re-run before it's representative of the current codebase.
+
 Full per-example results (before/after label, confidence, and exactly which words were changed) are in [`results/pwws/`](results/pwws/), [`results/textfooler/`](results/textfooler/), and [`results/pso/`](results/pso/) — see `report.md` in each folder for a readable summary, or `details.json` for structured data.
+
+`results/pso/` 里目前还是**旧的、基于 HowNet 的跑法**（0%，见"关键发现"）；代码已经改成用 WordNet 了（见"方法"），所以这个数字需要重跑之后才能代表现在的代码。
 
 完整的逐条结果（攻击前后标签、置信度、以及具体改动了哪些词）见 [`results/pwws/`](results/pwws/)、[`results/textfooler/`](results/textfooler/) 和 [`results/pso/`](results/pso/) 文件夹，每个文件夹下 `report.md` 是可读报告，`details.json` 是结构化数据。
 
@@ -111,6 +121,7 @@ python run_attack.py pwws        # ~15-30 min on CPU; seconds/example on a CUDA 
 python run_attack.py textfooler
 python run_attack.py pso         # slow on CPU (full query budget per example)
 python run_attack.py clare       # search + masked-LM based, slowest; a GPU is strongly recommended
+python run_attack.py cea --query-budget 5000   # needs a bigger budget for its full 50-iteration schedule (100 candidates/iter)
 python compare_results.py        # prints a summary table across all attacks that have been run
 ```
 
@@ -124,8 +135,9 @@ CUDA is used automatically when available (falls back to CPU otherwise). Each `r
 
 ```
 baseline.py           # computes pre-attack detection rate, selects attack seeds
-run_attack.py          # runs one of the 4 attacks end-to-end
-custom_recipes.py       # TF-free TextFooler/CLARE variants (sentence-transformers instead of USE)
+run_attack.py          # runs one of the 5 attacks end-to-end
+custom_recipes.py       # TF-free TextFooler/CLARE, WordNet-based PSO, and CEA builders
+cea_search.py           # CEA's Cross-Entropy Optimization, as a native TextAttack SearchMethod
 sbert_encoder.py        # the sentence-transformers-based semantic similarity constraint
 detailed_report.py      # turns raw attack results into details.json + report.md
 compare_results.py      # prints a summary table across all attacks that have been run
@@ -140,13 +152,19 @@ results/<recipe>/        # summary.json, details.json, report.md, results.csv pe
 **EN**
 - Sample size is 50 prompts per attack; a larger sample would give tighter confidence intervals on the success-rate estimates.
 - CLARE (masked-language-model based perturbation) is too slow to complete on CPU; it is being run on a GPU server and this README will be updated once that result is in.
+- PSO's substitution source changed from HowNet to WordNet after its first run (0% success); `results/pso/` still holds the pre-change HowNet numbers until it's re-run.
 - The semantic-similarity constraint for TextFooler/CLARE is a PyTorch substitute for the original TensorFlow-based USE constraint, so absolute numbers may differ slightly from the original papers' reported results.
+- CEA here is a from-scratch reimplementation of the published algorithm (Algorithm 1) as a TextAttack `SearchMethod`, not a direct port of the author's [reference script](https://github.com/MingzeLucasNi/CE-Attack) (which is an unfinished companion snippet for the paper, not the exact code behind its reported numbers) — so this project's CEA results are not directly comparable to the numbers in the paper itself.
+- Per Algorithm 1, CEA always substitutes *every* editable position on every sampled candidate (there's no "leave this word unchanged" option once it's eligible), so its modification rate can run higher than the other four attacks; the `Sim(x̃,x)` term in its objective is what keeps this in check rather than a hard cap.
 - Results reflect this specific model snapshot (Prompt Guard 86M); Meta's newer Prompt Guard 2 models were not evaluated here.
 
 **中文**
 - 每种攻击样本量为50条，更大的样本量能让成功率估计的置信区间更紧。
 - CLARE（基于掩码语言模型的扰动）在 CPU 上太慢跑不完，正在服务器GPU上跑，跑完后会更新到本文档。
+- PSO 的替换词来源在第一次跑完（0%成功）之后从 HowNet 改成了 WordNet；`results/pso/` 里现在还是改之前基于 HowNet 的数字，等重跑后会更新。
 - TextFooler/CLARE 的语义相似度约束用 PyTorch 方案替代了原论文基于 TensorFlow 的 USE 约束，因此绝对数值可能与原论文报告的结果略有出入。
+- 这里的 CEA 是照着论文发表的算法（Algorithm 1）重新实现成 TextAttack 的 `SearchMethod`，不是直接照搬作者的[参考代码](https://github.com/MingzeLucasNi/CE-Attack)（那份代码是论文的一个未完成的配套脚本，不是产出论文里那些数字的确切代码）——所以这个项目里跑出来的 CEA 结果，和论文里报告的数字不能直接对比。
+- 按 Algorithm 1 的设计，CEA 每次采样候选文本时，所有"可编辑"的位置都会被强制替换（一旦某个位置可编辑，就没有"保持不变"这个选项），所以它的修改率可能比其他四种攻击更高；靠目标函数里的 `Sim(x̃,x)` 项来约束，而不是硬性上限。
 - 结果只反映 Prompt Guard 86M 这一个模型快照，未评测 Meta 更新的 Prompt Guard 2 系列。
 
 ---
@@ -157,4 +175,5 @@ results/<recipe>/        # summary.json, details.json, report.md, results.csv pe
 - Jin, D., Jin, Z., Zhou, J. T., & Szolovits, P. (2020). *Is BERT Really Robust? A Strong Baseline for Natural Language Attack on Text Classification and Entailment.* AAAI. (TextFooler)
 - Li, D., Zhang, Y., Peng, H., Chen, L., Brockett, C., Sun, M. T., & Dolan, B. (2021). *Contextualized Perturbation for Textual Adversarial Attack.* NAACL. (CLARE)
 - Zang, Y., Qi, F., Yang, C., Liu, Z., Zhang, M., Liu, Q., & Sun, M. (2020). *Word-level Textual Adversarial Attacking as Combinatorial Optimization.* ACL. (PSO)
+- Ni, M., Gong, Y., & Liu, W. *Cross-Entropy Attacks to Language Models via Rare Event Simulation.* [github.com/MingzeLucasNi/CE-Attack](https://github.com/MingzeLucasNi/CE-Attack). (CEA)
 - Morris, J., Lifland, E., Yoo, J. Y., Grigsby, J., Jin, D., & Qi, Y. (2020). *TextAttack: A Framework for Adversarial Attacks, Data Augmentation, and Adversarial Training in NLP.* EMNLP.
